@@ -1,0 +1,656 @@
+// Green購 企業福利網 - 資料庫 Schema
+// 使用 Supabase (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==================== 企業會員 ====================
+
+model Company {
+  id              String         @id @default(cuid())
+  name            String         // 公司名稱
+  taxId           String         @unique // 統一編號
+  phone           String?
+  address         String?
+  industry        String?        // 產業別
+  employeeCount   Int?           // 員工人數
+
+  // 會員方案
+  planType        PlanType       @default(FREE)
+  planStartDate   DateTime?
+  planEndDate     DateTime?
+
+  // 信用額度（月結）
+  creditLimit     Decimal?       @db.Decimal(12, 2)
+  creditUsed      Decimal        @default(0) @db.Decimal(12, 2)
+
+  // 審核狀態
+  status          CompanyStatus  @default(PENDING)
+  approvedAt      DateTime?
+  approvedBy      String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // 關聯
+  users           User[]
+  orders          Order[]
+  inquiries       Inquiry[]
+  esgRecords      ESGRecord[]
+  approvals       Approval[]
+
+  @@map("companies")
+}
+
+enum PlanType {
+  FREE      // 綠芽方案
+  BASIC     // 綠葉方案
+  PRO       // 綠樹方案
+}
+
+enum CompanyStatus {
+  PENDING   // 待審核
+  APPROVED  // 已通過
+  REJECTED  // 已拒絕
+  SUSPENDED // 已停權
+}
+
+// ==================== 用戶 ====================
+
+model User {
+  id              String         @id @default(cuid())
+  email           String         @unique
+  password        String?        // 加密後的密碼
+  name            String
+  phone           String?
+  avatar          String?
+
+  // 角色
+  role            UserRole       @default(BUYER)
+
+  // 企業關聯（企業用戶才有）
+  companyId       String?
+  company         Company?       @relation(fields: [companyId], references: [id])
+
+  // 廠商關聯（廠商用戶才有）
+  vendorId        String?
+  vendor          Vendor?        @relation(fields: [vendorId], references: [id])
+
+  // 是否可簽核
+  canApprove      Boolean        @default(false)
+
+  emailVerified   DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // 關聯
+  orders          Order[]
+  approvals       Approval[]     @relation("ApprovalApprover")
+  requestedApprovals Approval[]  @relation("ApprovalRequester")
+
+  @@map("users")
+}
+
+enum UserRole {
+  BUYER         // 企業採購人員
+  COMPANY_ADMIN // 企業管理員
+  VENDOR        // 廠商人員
+  VENDOR_ADMIN  // 廠商管理員
+  ADMIN         // 平台管理員
+  SUPER_ADMIN   // 超級管理員
+}
+
+// ==================== 廠商 ====================
+
+model Vendor {
+  id              String         @id @default(cuid())
+  name            String         // 廠商名稱
+  taxId           String         @unique // 統一編號
+  phone           String?
+  email           String?
+  address         String?
+  description     String?        @db.Text
+  logo            String?
+
+  // 分類標籤
+  tags            String[]       // MIT, 有機, 環保標章等
+
+  // 銀行資訊（結算用）
+  bankName        String?
+  bankAccount     String?
+  bankAccountName String?
+
+  // 抽傭比例
+  commissionRate  Decimal        @default(0.10) @db.Decimal(4, 2)
+
+  // 審核狀態
+  status          VendorStatus   @default(PENDING)
+  approvedAt      DateTime?
+  approvedBy      String?
+  rejectionReason String?
+
+  // 推薦人（分潤用）
+  referrerId      String?
+  referrer        Vendor?        @relation("VendorReferral", fields: [referrerId], references: [id])
+  referrals       Vendor[]       @relation("VendorReferral")
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // 關聯
+  users           User[]
+  products        Product[]
+  orderItems      OrderItem[]
+  settlements     Settlement[]
+
+  @@map("vendors")
+}
+
+enum VendorStatus {
+  PENDING   // 待審核
+  APPROVED  // 已通過
+  REJECTED  // 已拒絕
+  SUSPENDED // 已停權
+}
+
+// ==================== 商品分類 ====================
+
+model Category {
+  id              String         @id @default(cuid())
+  name            String
+  slug            String         @unique
+  description     String?
+  image           String?
+  parentId        String?
+  parent          Category?      @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children        Category[]     @relation("CategoryHierarchy")
+  sortOrder       Int            @default(0)
+  isActive        Boolean        @default(true)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  products        Product[]
+
+  @@map("categories")
+}
+
+// ==================== 商品 ====================
+
+model Product {
+  id              String         @id @default(cuid())
+  vendorId        String
+  vendor          Vendor         @relation(fields: [vendorId], references: [id])
+
+  name            String
+  slug            String         @unique
+  description     String?        @db.Text
+  content         String?        @db.Text  // 詳細介紹（富文本）
+
+  // 分類
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id])
+
+  // 價格
+  price           Decimal        @db.Decimal(12, 2)
+  comparePrice    Decimal?       @db.Decimal(12, 2) // 原價（劃掉的價格）
+  cost            Decimal?       @db.Decimal(12, 2) // 成本（內部用）
+
+  // 庫存
+  stock           Int            @default(0)
+  lowStockAlert   Int            @default(10)
+  trackStock      Boolean        @default(true)
+
+  // 圖片
+  images          String[]
+
+  // ESG 標籤
+  esgTags         String[]       // MIT, 有機, 環保標章, 低碳等
+
+  // 規格
+  specs           Json?          // 商品規格（JSON）
+
+  // 狀態
+  status          ProductStatus  @default(DRAFT)
+  isActive        Boolean        @default(true)
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orderItems      OrderItem[]
+
+  @@map("products")
+}
+
+enum ProductStatus {
+  DRAFT     // 草稿
+  PENDING   // 待審核
+  APPROVED  // 已上架
+  REJECTED  // 審核未通過
+  ARCHIVED  // 已下架
+}
+
+// ==================== 訂單 ====================
+
+model Order {
+  id              String         @id @default(cuid())
+  orderNumber     String         @unique // 訂單編號
+
+  // 企業資訊
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+  userId          String
+  user            User           @relation(fields: [userId], references: [id])
+
+  // 金額
+  subtotal        Decimal        @db.Decimal(12, 2)
+  discount        Decimal        @default(0) @db.Decimal(12, 2)
+  shipping        Decimal        @default(0) @db.Decimal(12, 2)
+  tax             Decimal        @default(0) @db.Decimal(12, 2)
+  total           Decimal        @db.Decimal(12, 2)
+
+  // 收件資訊
+  shippingName    String
+  shippingPhone   String
+  shippingAddress String
+  shippingNote    String?
+
+  // 發票資訊
+  invoiceType     InvoiceType    @default(COMPANY)
+  invoiceTitle    String?
+  invoiceTaxId    String?
+  invoiceAddress  String?
+
+  // 付款資訊
+  paymentMethod   PaymentMethod?
+  paymentStatus   PaymentStatus  @default(PENDING)
+  paidAt          DateTime?
+  paymentId       String?        // 金流交易編號
+
+  // 訂單狀態
+  status          OrderStatus    @default(PENDING_APPROVAL)
+
+  // 簽核
+  requireApproval Boolean        @default(false)
+  approvalId      String?
+  approval        Approval?      @relation(fields: [approvalId], references: [id])
+
+  // 月結
+  isMonthlyBilling Boolean       @default(false)
+  billingMonth    String?        // 格式：2026-02
+
+  note            String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orderItems      OrderItem[]
+  esgRecords      ESGRecord[]
+
+  @@map("orders")
+}
+
+enum InvoiceType {
+  PERSONAL  // 個人
+  COMPANY   // 公司
+  DONATE    // 捐贈
+}
+
+enum PaymentMethod {
+  CREDIT_CARD     // 信用卡
+  ATM             // ATM 轉帳
+  MONTHLY_BILLING // 月結
+}
+
+enum PaymentStatus {
+  PENDING   // 待付款
+  PAID      // 已付款
+  FAILED    // 付款失敗
+  REFUNDED  // 已退款
+}
+
+enum OrderStatus {
+  PENDING_APPROVAL  // 待簽核
+  PENDING_PAYMENT   // 待付款
+  PROCESSING        // 處理中
+  SHIPPED           // 已出貨
+  DELIVERED         // 已送達
+  COMPLETED         // 已完成
+  CANCELLED         // 已取消
+  REFUNDING         // 退款中
+  REFUNDED          // 已退款
+}
+
+// ==================== 訂單明細 ====================
+
+model OrderItem {
+  id              String         @id @default(cuid())
+  orderId         String
+  order           Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id])
+
+  vendorId        String
+  vendor          Vendor         @relation(fields: [vendorId], references: [id])
+
+  // 快照資訊（下單時的商品資訊）
+  productName     String
+  productImage    String?
+  productPrice    Decimal        @db.Decimal(12, 2)
+
+  quantity        Int
+  subtotal        Decimal        @db.Decimal(12, 2)
+
+  // 出貨狀態
+  shippingStatus  ShippingStatus @default(PENDING)
+  trackingNumber  String?
+  shippedAt       DateTime?
+  deliveredAt     DateTime?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("order_items")
+}
+
+enum ShippingStatus {
+  PENDING     // 待出貨
+  SHIPPED     // 已出貨
+  DELIVERED   // 已送達
+  RETURNED    // 已退貨
+}
+
+// ==================== 簽核 ====================
+
+model Approval {
+  id              String         @id @default(cuid())
+
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+
+  // 申請人
+  requesterId     String
+  requester       User           @relation("ApprovalRequester", fields: [requesterId], references: [id])
+
+  // 簽核人
+  approverId      String?
+  approver        User?          @relation("ApprovalApprover", fields: [approverId], references: [id])
+
+  // 簽核內容
+  type            ApprovalType
+  amount          Decimal        @db.Decimal(12, 2)
+  description     String?
+
+  // 狀態
+  status          ApprovalStatus @default(PENDING)
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orders          Order[]
+
+  @@map("approvals")
+}
+
+enum ApprovalType {
+  ORDER     // 訂單簽核
+  INQUIRY   // 詢價簽核
+}
+
+enum ApprovalStatus {
+  PENDING   // 待簽核
+  APPROVED  // 已通過
+  REJECTED  // 已拒絕
+}
+
+// ==================== 活動/旅遊 ====================
+
+model Activity {
+  id              String         @id @default(cuid())
+  title           String
+  slug            String         @unique
+  type            ActivityType
+
+  description     String?        @db.Text
+  content         String?        @db.Text
+
+  // 時間
+  startDate       DateTime?
+  endDate         DateTime?
+  duration        String?        // 例如：一天、兩天一夜
+
+  // 價格
+  priceMin        Decimal?       @db.Decimal(12, 2)
+  priceMax        Decimal?       @db.Decimal(12, 2)
+  priceNote       String?        // 價格說明
+
+  // 人數
+  minParticipants Int?
+  maxParticipants Int?
+
+  // 地點
+  location        String?
+
+  // 圖片
+  images          String[]
+
+  // ESG 相關
+  esgTags         String[]
+  carbonReduction Decimal?       @db.Decimal(10, 2) // 估計減碳量
+
+  isActive        Boolean        @default(true)
+  isFeatured      Boolean        @default(false)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  inquiries       Inquiry[]
+  esgRecords      ESGRecord[]
+
+  @@map("activities")
+}
+
+enum ActivityType {
+  TRAVEL      // 企業旅遊
+  VOLUNTEER   // 志工活動
+  COURSE      // 課程講座
+  TEAMBUILDING // 團建活動
+  WORKSHOP    // 手作體驗
+}
+
+// ==================== 詢價單 ====================
+
+model Inquiry {
+  id              String         @id @default(cuid())
+  inquiryNumber   String         @unique
+
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+
+  activityId      String?
+  activity        Activity?      @relation(fields: [activityId], references: [id])
+
+  // 詢價內容
+  type            InquiryType
+  title           String
+  description     String?        @db.Text
+
+  // 需求
+  participants    Int?           // 預計人數
+  preferredDate   String?        // 希望日期
+  budget          String?        // 預算範圍
+  requirements    String?        @db.Text // 特殊需求
+
+  // 聯絡人
+  contactName     String
+  contactPhone    String
+  contactEmail    String
+
+  // 狀態
+  status          InquiryStatus  @default(NEW)
+
+  // 回覆
+  response        String?        @db.Text
+  quotation       Decimal?       @db.Decimal(12, 2)
+  respondedAt     DateTime?
+  respondedBy     String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("inquiries")
+}
+
+enum InquiryType {
+  ACTIVITY    // 活動詢價
+  PRODUCT     // 商品大量採購
+  CUSTOM      // 客製化需求
+}
+
+enum InquiryStatus {
+  NEW         // 新詢價
+  PROCESSING  // 處理中
+  QUOTED      // 已報價
+  ACCEPTED    // 已接受
+  REJECTED    // 已拒絕
+  EXPIRED     // 已過期
+}
+
+// ==================== ESG 紀錄 ====================
+
+model ESGRecord {
+  id              String         @id @default(cuid())
+
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+
+  // 來源
+  orderId         String?
+  order           Order?         @relation(fields: [orderId], references: [id])
+  activityId      String?
+  activity        Activity?      @relation(fields: [activityId], references: [id])
+
+  // 紀錄類型
+  category        ESGCategory
+  type            String         // MIT採購、減碳量、志工時數等
+
+  // 數值
+  value           Decimal        @db.Decimal(12, 2)
+  unit            String         // 元、kg、小時等
+
+  description     String?
+
+  recordedAt      DateTime       @default(now())
+
+  @@map("esg_records")
+}
+
+enum ESGCategory {
+  ENVIRONMENTAL  // 環境
+  SOCIAL         // 社會
+  GOVERNANCE     // 治理
+}
+
+// ==================== 廠商結算 ====================
+
+model Settlement {
+  id              String         @id @default(cuid())
+
+  vendorId        String
+  vendor          Vendor         @relation(fields: [vendorId], references: [id])
+
+  // 結算期間
+  periodStart     DateTime
+  periodEnd       DateTime
+
+  // 金額
+  totalSales      Decimal        @db.Decimal(12, 2)
+  commission      Decimal        @db.Decimal(12, 2)
+  netAmount       Decimal        @db.Decimal(12, 2)
+
+  // 狀態
+  status          SettlementStatus @default(PENDING)
+  paidAt          DateTime?
+  paymentRef      String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("settlements")
+}
+
+enum SettlementStatus {
+  PENDING   // 待結算
+  CONFIRMED // 已確認
+  PAID      // 已付款
+}
+
+// ==================== 部落格文章 ====================
+
+model Post {
+  id              String         @id @default(cuid())
+  title           String
+  slug            String         @unique
+  excerpt         String?
+  content         String?        @db.Text
+  coverImage      String?
+
+  // 分類標籤
+  category        String?
+  tags            String[]
+
+  // 作者
+  authorId        String?
+  authorName      String?
+
+  // 狀態
+  status          PostStatus     @default(DRAFT)
+  publishedAt     DateTime?
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  // 統計
+  viewCount       Int            @default(0)
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("posts")
+}
+
+enum PostStatus {
+  DRAFT     // 草稿
+  PUBLISHED // 已發布
+  ARCHIVED  // 已封存
+}
+
+// ==================== 系統設定 ====================
+
+model Setting {
+  id              String         @id @default(cuid())
+  key             String         @unique
+  value           String         @db.Text
+  description     String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@map("settings")
+}
