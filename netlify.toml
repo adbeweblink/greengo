@@ -1,72 +1,21 @@
 # Netlify 部署配置 - Green購 企業福利網
-# 網址：greengo.netlify.app
+# 網址：greengo-tw.netlify.app
 
 [build]
-  # 建置指令
   command = "npm run build"
-  # Next.js 輸出目錄（由 @netlify/plugin-nextjs 自動處理）
-  publish = ".next"
 
-# Next.js 官方 Netlify 插件
+# Next.js 官方 Netlify 插件（自動處理 publish 目錄）
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# 環境變數（生產環境）
 [build.environment]
-  # Node.js 版本
   NODE_VERSION = "20"
-  # Next.js 生產模式
-  NODE_ENV = "production"
-  # 公開的應用 URL（Netlify 會自動設定 URL）
-  NEXT_PUBLIC_APP_URL = "https://greengo.netlify.app"
 
-# 開發環境預覽
-[context.deploy-preview]
-  command = "npm run build"
-
-[context.deploy-preview.environment]
-  NODE_ENV = "production"
-
-# 分支部署
-[context.branch-deploy]
-  command = "npm run build"
-
-[context.branch-deploy.environment]
-  NODE_ENV = "production"
-
-# 標頭設定（安全性和效能）
+# 標頭設定（安全性）
 [[headers]]
   for = "/*"
   [headers.values]
-    # 安全標頭
     X-Frame-Options = "DENY"
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
-    # 快取策略
-    Cache-Control = "public, max-age=0, must-revalidate"
-
-# 靜態資源快取
-[[headers]]
-  for = "/_next/static/*"
-  [headers.values]
-    Cache-Control = "public, max-age=31536000, immutable"
-
-[[headers]]
-  for = "/images/*"
-  [headers.values]
-    Cache-Control = "public, max-age=86400"
-
-# 重定向規則（Next.js 處理大部分，這裡補充）
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-
-# 功能設定
-[functions]
-  # 函數目錄（Next.js API Routes）
-  directory = ".netlify/functions"
-  # 函數執行區域（亞太地區）
-  [functions."*"]
-    included_files = ["node_modules/**"]
